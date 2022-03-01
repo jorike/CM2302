@@ -1,10 +1,10 @@
-﻿{{CM2302 Device Driver
-                      
+{{CM2302 Device Driver
+
 ┌──────────────────────────────────────────┐
-│ CM2302                                   │
-│ Author: James Rike                       │               
-│ Copyright (c) 2020 Seapoint Software     │               
-│ See end of file for terms of use.        │                
+│ CM2302 PASM Driver                       │
+│ Author: James Rike                       │
+│ Copyright (c) 2020 Seapoint Software     │
+│ See end of file for terms of use.        │
 └──────────────────────────────────────────┘
 
 <object details, schematics, etc.>
@@ -18,7 +18,10 @@ CON
 VAR
   byte cog
   long ThVar[2]
-   
+  long tc_sign
+  long tf_sign
+
+
 OBJ
   num   :       "Simple_Numbers"
 '  dbg   :       "PASDebug"      '<---- Add for Debugger
@@ -36,26 +39,56 @@ PUB Stop                        'Cog stop method
         cogstop(cog~ - 1)
 
 PUB gettempf | tf
+    tf_sign := FALSE            'Initialize the global sign variable for farenheit
 
-    tf := ThVar[0] * 9 / 5 + 320
+    if (ThVar[0] => $80b2)      'Check if 17.8 celcius or 0 farenheit
+      tf_sign := TRUE           'If sign bit set then set global variable to true
+    else
+      tf_sign := FALSE
+
+    tf := ThVar[0] & $7FFF      'clear the sign bit
+
+    if (ThVar[0] => $8000)      'check negative celcius temperature reading
+      tf := ||(tf * 9 / 5 - 320)
+    else
+      tf := ThVar[0] * 9 / 5 + 320
+
     return tf
 
-PRI PrintData  | tf, th
+PUB gettempc | tc, tmp
+    tc_sign := FALSE            'Initialize the global sign variable for celsius
+    tmp := ThVar[0] & $8000     'Get the sign bit
+
+    if (tmp == $8000)           'Check if the sign bit is set (negative temperature)
+      tc_sign := TRUE           'If sign bit set then set global variable to true
+    else
+      tc_sign := FALSE
+
+    tc := ThVar[0] & $7FFF      'clear the sign bit
+    return tc
+
+PRI PrintData  | tf,tc,th
 
     pst.Start(115_200)
 
     repeat
         pst.char(0)
-        pst.str(string("-----------"))
-        pst.NewLine
-        pst.str(string("Temp:     "))
+        if (tf_sign == FALSE)
+          pst.str(string("Temp:    "))
+        else
+          pst.str(string("Temp:  - "))
         tf := gettempf
         pst.str(num.decf(tf / 10, 3))
         pst.char(".")
         pst.str(num.dec(tf // 10))
         pst.str(string(" degrees F"))
         pst.NewLine
-        pst.str(string("          "))
+
+        if (tc_sign == FALSE)
+          pst.str(string("         "))
+        else
+          pst.str(string("       - "))
+        tc := gettempc
         pst.str(num.decf(ThVar[0] / 10, 3))
         pst.char(".")
         pst.str(num.dec(tf // 10))
@@ -77,7 +110,7 @@ entry
 '  --------- Debugger Kernel add this at Entry (Addr 0) ---------
 '   long $34FC1202,$6CE81201,$83C120B,$8BC0E0A,$E87C0E03,$8BC0E0A
 '   long $EC7C0E05,$A0BC1207,$5C7C0003,$5C7C0003,$7FFC,$7FF8
-'  -------------------------------------------------------------- 
+'  --------------------------------------------------------------
 
 '
 ' Test code with modify, MainRAM access, jumps, subroutine and waitcnt.
@@ -85,17 +118,17 @@ entry
 
         rdlong sfreq, #0        'Get clock frequency
         mov dpin, #1
-        shl dpin, data_pin         
+        shl dpin, data_pin
 
 read    mov Delay, sfreq
         shl Delay, #1           'Times 2
         mov Time, cnt           'Get current time
         add Time, Delay         'Adjust by 2 seconds
         waitcnt Time, Delay     '2 second settling time
-        
+
         or outa, dPin           'PreSet DataPin HIGH
         or dira, dPin
-        
+
         xor outa, dPin          'PreSet DataPin LOW [Tbe] - START
 
         mov Delay, mSec_Delay   'Set Delay to 1 mSec
@@ -118,7 +151,7 @@ dloop   waitpeq dPin, dPin      'Catch the data bit
         waitpne dPin, dPin      'Catch [Tlow]
         mov endp, cnt           'Store the time of the trailing edge
         sub endp, beginp wc     'Calculate pulse width in tick counts
-  if_nc cmp endp, uSec_Sample wc     
+  if_nc cmp endp, uSec_Sample wc
   if_nc add data, #1            'if c = 0, data bit = 1
         cmp counter, #1 wz
   if_nz shl data, #1
@@ -127,17 +160,17 @@ dloop   waitpeq dPin, dPin      'Catch the data bit
         mov humid, data
         mov data, #0
         mov counter, #8         'Set the loop counter for the 8 check sum bits
-        
+
 csloop  waitpeq dPin, dPin      'Catch the data bit
         mov beginp, cnt         'Store the time of the leading edge
         waitpne dPin, dPin      'Catch [Tlow]
         mov endp, cnt           'Store the time of the trailing edge
         sub endp, beginp wc     'Calculate pulse width in tick counts
-  if_nc cmp endp, uSec_Sample wc     
+  if_nc cmp endp, uSec_Sample wc
   if_nc add data, #1            'if c = 0, data bit = 1
         cmp counter, #1 wz
   if_nz shl data, #1
-        djnz counter, #csloop        
+        djnz counter, #csloop
 
         mov temp, humid         'Process the data
         shr humid, #16
@@ -159,8 +192,8 @@ csloop  waitpeq dPin, dPin      'Catch the data bit
 
 
 dpin          long 0
-data_pin      long 5
-'data_pin      long 17
+'data_pin      long 5
+data_pin      long 17
 mSec_Delay    long 80_000
 uSec_Sample   long 2_400
 tmp_mask      long $FFFF
@@ -169,7 +202,7 @@ endp          long 0
 beginp        long 0
 sfreq         long 0
 Time          long 0
-Delay         long 0 
+Delay         long 0
 counter       long 0
 data          long 0
 temp          long 0
@@ -181,9 +214,9 @@ fit
 
 {{
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                                   TERMS OF USE: MIT License                                                  │                                                            
+│                                                   TERMS OF USE: MIT License                                                  │
 ├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation    │ 
+│Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation    │
 │files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy,    │
 │modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software│
 │is furnished to do so, subject to the following conditions:                                                                   │
